@@ -1,4 +1,4 @@
-import os, argparse
+import os, sys, argparse
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
@@ -16,21 +16,32 @@ parser.add_argument("--verbose", action="store_true", help="Enable verbose outpu
 args = parser.parse_args()
 
 client = genai.Client(api_key=api_key)
-messages = [types.Content(role="user", parts=[types.Part(text=args.user_prompt)])]
-response = client.models.generate_content(
+
+def generate_content(messages):
+    return client.models.generate_content(
     model="gemini-2.5-flash",
     contents=messages,
-    config=types.GenerateContentConfig(tools=[available_functions],system_instruction=system_prompt),
+    config=types.GenerateContentConfig(tools=[available_functions],system_instruction=system_prompt
+    ),
 )
-if not response.usage_metadata:
-    raise RuntimeError("model's usage metadata wasn't found")
 
 def main():
+    messages = [types.Content(role="user", parts=[types.Part(text=args.user_prompt)])]
+
     if args.verbose:
         print(f"User prompt: {args.user_prompt}")
-        print(f"Prompt tokens: {response.usage_metadata.prompt_token_count}")
-        print(f"Response tokens: {response.usage_metadata.candidates_token_count}")
-    if response.function_calls:
+
+    for _ in range(20):
+        response = generate_content(messages)
+
+        if response.candidates:
+            for candidate in response.candidates:
+                messages.append(candidate.content)
+        
+        if not response.function_calls:
+            print(f"Response:\n{response.text}")
+            return
+        
         function_results = []
         for function_call in response.function_calls:
             function_call_result = call_function(function_call, args.verbose)
@@ -48,8 +59,11 @@ def main():
 
             if args.verbose:
                 print(f"-> {function_call_result.parts[0].function_response.response}")
-    else:
-        print(f"Response:\n{response.text}")
+
+        messages.append(types.Content(role="user", parts=function_results))
+    
+    print("Error: max iterations reached without a final response")
+    sys.exit(1)
 
 if __name__ == "__main__":
     main()
